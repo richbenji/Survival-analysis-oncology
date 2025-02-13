@@ -1,0 +1,242 @@
+---
+title: "Oncology"
+author: "Richard"
+date: "2025-01-23"
+output:
+  html_document:
+    code_folding: hide #  Cache le code  
+    collapsed: yes # Crée un document unique 
+    fig_caption: yes # Figures encapsulées ? 
+    fig_height: 5 # Hauteur par défaut des figures
+    fig_width: 6 # Largeur par défaut des figure
+    highlight: tango # style de mise en valeur du code
+    number_sections: yes # Ajout table des matières 
+    theme: united  # Style du document
+    toc: yes # Table des matiere ?
+    toc_depth: 3  # Profondeur table des matière
+    toc_float: yes # table des matière flottante
+  pdf_document:
+    toc: true
+    toc_depth: '3'
+  word_document: default
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Installation des librairies si ce n'est pas encore fait
+#require(devtools)
+require(knitr) 
+require(pander) # Librairie pour afficher des tableaux
+require(pastecs) # librairie qui inclut la fonction de stat descriptive stat.desc
+
+library(here)
+library(readxl)
+library(dplyr)
+library(survival)
+library(survminer)
+library(parameters)
+library(GGally)
+library(ggsurvfit)
+library(tidycmprsk)
+```
+
+# Dataset description 
+
+The response variable, SurvTime, is the survival time in days of a lung cancer patient.
+The covariates are:
+- Cell (type of cancer cell),
+- Therapy (type of therapy: standard or test),
+- Prior (prior therapy: 0=no, 10=yes)
+- Age (age in years)
+- DiagTime(time in months from diagnosis to entry into the trial)
+- Kps(performance status).
+
+A censoring indicator variable Censor is created from the data, with the value 1 indicating a censored time and the value 0 indicating an event time. Since there are only two types of therapy, an indicator variable, Treatment, is constructed for therapy type, with: value 0 for standard therapy and value 1 for test therapy.
+
+```{r}
+# Charger les données depuis le fichier XLSX
+data <- read_excel(here("Copy_of_Oncology_dataset_for_R.xlsx"))
+data_structure <- data.frame(
+  Column = names(data),
+  Type = sapply(data, class),
+  Example_Values = sapply(data, function(x) paste(head(x, 3), collapse = ", "))
+)
+kable(data_structure)
+
+# Définir les types des colonnes
+data$Cell <- as.factor(data$Cell)          # Type de cellule (catégoriel)
+data$Therapy <- as.factor(data$Therapy)    # Thérapie (catégoriel)
+data$Prior <- as.factor(data$Prior)        # Thérapie préalable (binaire : 0/10)
+data$Age <- as.numeric(data$Age)           # Âge (numérique)
+data$DiagTime <- as.numeric(data$DiagTime) # Temps depuis le diagnostic (numérique)
+data$Kps <- as.numeric(data$Kps)           # Statut de performance (numérique)
+data$Censor <- as.factor(data$Censor)     # Indicateur de censure (binaire)
+data$Treatment <- as.factor((data$Treatment))  # binaire (Standard ou Test)
+
+kable(head(data))
+```
+# 1. What was the maximum survival time for the cell type adeno?
+```{r}
+# Filtrer les données pour le type de cellule "adeno"
+adeno_data <- subset(data, Cell == "adeno")
+#adeno_data <- data %>% filter(Cell == "adeno")
+
+# Trouver le temps de survie maximum
+max_survival_time <- max(adeno_data$SurvTime, na.rm = TRUE)
+#max_survival_time <- max(data$SurvTime[data$Cell == "adeno"], na.rm = TRUE)
+
+# Afficher le résultat
+print(max_survival_time)
+```
+The maximum survival time for the cell type adeno is `r max_survival_time`.
+
+# 2. What is the average age of subjects in this study?
+
+```{r}
+# Calculer l'âge moyen
+average_age <- mean(data$Age, na.rm = TRUE)
+
+# Afficher le résultat
+print(average_age)
+
+```
+The average age of subjects in this study is `r average_age`.
+
+# 3. Which cell type appeared the most during this study?
+
+```{r}
+# Trouver le type de cellule le plus fréquent
+most_common_cell <- names(which.max(table(data$Cell)))
+
+# Afficher le résultat
+print(most_common_cell)
+
+```
+The cell type that appeared the most during this study is `r most_common_cell`.
+
+# 4. Calculate descriptive statistics for all numeric variables within this dataset?
+
+```{r}
+# Résumé descriptif pour toutes les colonnes numériques
+#numeric_summary <- summary(data)
+kable(summary(data))
+# Afficher le résultat
+#print(numeric_summary)
+
+```
+
+# 5. Perform a survival analysis to assess the survival time (variable SurvTime)? based on the cancerous cells (var Cell)? Consider applying survival functions/kaplan meier quartiles/cumulative incidence function/cox regression etc.
+
+```{r}
+# Vérifier et préparer les données
+data$Censor <- as.numeric(data$Censor)  # Si nécessaire, convertir en numérique
+data$Cell <- as.factor(data$Cell)       # Convertir Cell en facteur si ce n'est pas déjà fait
+
+# Créer un objet de survie
+surv_obj <- Surv(time = data$SurvTime, event = data$Censor)
+
+# 1. Courbes de survie de Kaplan-Meier pour chaque type de cellule :
+# comparer visuellement la survie entre les différents types de cellules cancéreuses.
+km_fit <- survfit(surv_obj ~ Cell, data = data)
+
+# Résumé des résultats
+summary(km_fit)
+
+# Tracer les courbes de Kaplan-Meier avec ggsurplot
+ggsurvplot(
+  km_fit,
+  data = data,
+  pval = TRUE,                # Afficher la p-valeur du test Log-Rank
+  conf.int = TRUE,            # Intervalle de confiance
+  risk.table = TRUE,          # Ajouter une table des risques
+  legend.title = "Cell Types",
+  xlab = "Time (days)",
+  ylab = "Survival Probability",
+  ggtheme = theme_minimal()
+)
+
+
+# Test du log-rank
+surv_diff <- survdiff(surv_obj ~ Cell, data = data)
+print(surv_diff)
+
+# Calculer la p-value
+p_value <- 1 - pchisq(surv_diff$chisq, df = length(levels(data$Cell)) - 1)
+cat("P-value du test du log-rank :", p_value, "\n", "Une p-value inférieure à 0,05 indique une différence significative entre les groupes.")
+
+# 2. Régression de Cox pour évaluer l'effet du type de cellule
+cox_fit <- coxph(surv_obj ~ Cell, data = data)
+
+# Résumé du modèle
+summary(cox_fit)
+kable(parameters(cox_fit, exponentiate = TRUE))
+```
+
+
+Le résumé fourni les coefficients, les erreurs standards, les valeurs z, les p-values, et les hazard ratios (HR).
+
+```{r}
+# Représentation graphique du modèle de Cox
+ggcoef_model(cox_fit, exponentiate = TRUE)
+
+# Ajout des covariables
+cox_fit_cov <- coxph(surv_obj ~ Cell + Age + Prior + Kps + Treatment + DiagTime, data = data)
+summary(cox_fit_cov)
+kable(parameters(cox_fit_cov, exponentiate = TRUE))
+ggcoef_model(cox_fit_cov, exponentiate = TRUE)
+
+# Evaluation des conditions d’application
+# Test des risques proportionnels
+cox_zph <- cox.zph(cox_fit_cov)
+print(cox_zph)
+```
+
+Aucune p-value n’est inférieure à 0,05, ainsi rien ne permet de conclure que l’hypothèse des risques proportionnels n’est pas respectée pour aucune des covariables incluses dans le modèle.
+
+```{r}
+# Visualiser les résidus de Schoenfeld
+par(mfrow=c(2,3)) # division de la fenêtre graphique en 2 lignes et 3 colonnes
+plot(cox_zph)
+
+
+# 3. Fonction de densité cumulative
+cum_inc_fit <- survfit(Surv(SurvTime, Censor) ~ Cell, data = data)
+summary(cum_inc_fit)
+
+# Tracer la fonction cumulative
+ggsurvplot(
+  cum_inc_fit,
+  data = data,
+  fun = "cumhaz",         # Risque cumulé
+  conf.int = TRUE,        # Ajouter l'intervalle de confiance
+  risk.table = TRUE,      # Afficher un tableau des risques
+  pval = TRUE,            # Ajouter la p-valeur du test Log-Rank
+  legend.title = "Cell Types",
+  xlab = "Time (days)",
+  ylab = "Cumulative Hazard",
+  ggtheme = theme_minimal()
+)
+```
+
+# 6. Perform an appropriate multivariable analysis to analyze the effect of independent variables age on the hazard ratio between the different cancerous cells (var Cell)?
+
+```{r}
+# Ajuster le modèle de régression de Cox avec l'âge comme covariable
+cox_model <- coxph(surv_obj ~ Cell + Age, data = data)
+
+# Résumé des résultats
+summary(cox_model)
+kable(parameters(cox_model, exponentiate = TRUE))
+```
+
+HR > 1 ==> Augmentation du risque
+
+```{r}
+# Test proportional hazards assumption
+ph_test <- cox.zph(cox_model)
+print(ph_test)
+```
+
+Aucune p-value n’est inférieure à 0,05, ainsi rien ne permet de conclure que l’hypothèse des risques proportionnels n’est pas respectée pour aucune des covariables incluses dans le modèle."
